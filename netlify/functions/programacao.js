@@ -1,5 +1,11 @@
 import { supabase } from "./_lib/supabase.js";
 
+const CORS_HEADERS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 function findCurrentAndNext(programs) {
   const now = new Date();
   const sorted = [...programs].sort(
@@ -28,6 +34,10 @@ function findCurrentAndNext(programs) {
 }
 
 export const handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 204, headers: CORS_HEADERS, body: "" };
+  }
+
   try {
     const params = event.queryStringParameters || {};
     const stream = params.stream;
@@ -35,6 +45,7 @@ export const handler = async (event) => {
     if (!stream) {
       return {
         statusCode: 400,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ success: false, error: "Parâmetro 'stream' obrigatório" }),
       };
     }
@@ -51,6 +62,7 @@ export const handler = async (event) => {
     if (canalErr) {
       return {
         statusCode: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ success: false, error: canalErr.message }),
       };
     }
@@ -58,6 +70,7 @@ export const handler = async (event) => {
     if (!canal || !canal.tvg_id) {
       return {
         statusCode: 200,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({
           success: false,
           error: "Canal não encontrado ou sem EPG",
@@ -75,6 +88,7 @@ export const handler = async (event) => {
     if (epgErr) {
       return {
         statusCode: 500,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({ success: false, error: epgErr.message }),
       };
     }
@@ -82,6 +96,7 @@ export const handler = async (event) => {
     if (!epg || !epg.programs || epg.programs.length === 0) {
       return {
         statusCode: 200,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({
           success: false,
           error: "Sem programação disponível",
@@ -94,6 +109,7 @@ export const handler = async (event) => {
     if (!atual && !proximo) {
       return {
         statusCode: 200,
+        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({
           success: false,
           error: "Nenhum programa disponível no momento",
@@ -104,6 +120,7 @@ export const handler = async (event) => {
     return {
       statusCode: 200,
       headers: {
+        ...CORS_HEADERS,
         "Content-Type": "application/json",
         "Cache-Control": "public, max-age=120",
       },
@@ -120,6 +137,7 @@ export const handler = async (event) => {
   } catch (err) {
     return {
       statusCode: 500,
+      headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ success: false, error: String(err) }),
     };
   }
