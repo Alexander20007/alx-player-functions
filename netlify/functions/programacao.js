@@ -6,6 +6,8 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+const RENDER_BASE = "https://iptv-apis.onrender.com";
+
 function findCurrentAndNext(programs) {
   const now = new Date();
   const sorted = [...programs].sort(
@@ -78,44 +80,60 @@ export const handler = async (event) => {
       };
     }
 
-    // 2) Busca programação no cache
-    const { data: epg, error: epgErr } = await supabase
+    // 2) Verifica cache local (rápido)
+    const { data: epg } = await supabase
       .from("epg_cache")
-      .select("programs")
+      .select("programs, updated_at")
       .eq("tvg_id", canal.tvg_id)
       .maybeSingle();
 
-    if (epgErr) {
-      return {
-        statusCode: 500,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({ success: false, error: epgErr.message }),
-      };
+    let programs = null;
+
+    if (epg && epg.programs && epg.programs.length > 0) {
+      // Cache fresco? (menos de 6h)
+      const updatedAt = epg.updated_at ? new Date(epg.updated_at).getTime() : 0;
+      const age = Date.now() - updatedAt;
+      if (age < 6 * 60 * 60 * 1000) {
+        programs = epg.programs;
+      }
     }
 
-    if (!epg || !epg.programs || epg.programs.length === 0) {
+    // 3) Se não tem cache ou está velho, chama o Render sob demanda
+    if (!programs) {
+      try {
+        const r = await fetch(
+          `${RENDER_BASE}/epg/on-demand?tvg_id=${encodeURIComponent(canal.tvg_id)}`,
+          { signal: AbortSignal.timeout(15000) }
+        );
+        const data = await r.json();
+        if (data.ok && data.atual) {
+          // O Render já devolve atual/proximo direto
+          return {
+            statusCode: 200,
+            headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
+            body: JSON.stringify({
+              success: true,
+              atual: data.atual,
+              proximo: data.proximo,
+            }),
+          };
+        }
+      } catch (e) {
+        console.warn("Render timeout/erro:", e.message);
+      }
+
       return {
         statusCode: 200,
         headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
         body: JSON.stringify({
           success: false,
-          error: "Sem programação disponível",
+          error: "EPG ainda não disponível. Tente novamente em instantes.",
         }),
       };
     }
 
-    const { atual, proximo } = findCurrentAndNext(epg.programs);
-
-    if (!atual && !proximo) {
-      return {
-        statusCode: 200,
-        headers: { ...CORS_HEADERS, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          success: false,
-          error: "Nenhum programa disponível no momento",
-        }),
-      };
-    }
+    // 4) Tem cache fresco, calcula
+    const { atual, proximo } = findCurrentAndNext(programs);
 
     return {
       statusCode: 200,
