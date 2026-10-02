@@ -6,7 +6,34 @@ const CORS_HEADERS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-const PAGE_SIZE = 1000; // Limite do Supabase por query
+const PAGE_SIZE = 1000;
+
+/**
+ * Detecta se o canal é VOD (série, filme, anime, episódio).
+ * Usa padrões de grupo e de nome para identificar.
+ */
+function isVOD(canal) {
+  const group = (canal.group || "").toLowerCase().trim();
+  const name = (canal.name || "").toLowerCase().trim();
+
+  // 1) Grupos que começam com "Serie", "Série", "Filme", "Movie", etc.
+  //    Ignora "Canais | NOVELAS" (esse é canal ao vivo)
+  if (/^(serie|série|filme|movie|novela|show|anime|animes|documentario|documentário)\s*\|/i.test(group)) {
+    return true;
+  }
+
+  // 2) Nomes que parecem episódios: "S02 E06", "S2E1", "T3 EP4"
+  if (/\bS\d+\s*E\d+\b/i.test(name)) return true;
+  if (/\bT\d+\s*EP?\d+\b/i.test(name)) return true;
+
+  // 3) Nomes tipo "2x05" (temporada x episódio)
+  if (/\b\d{1,2}x\d{1,2}\b/.test(name)) return true;
+
+  // 4) Nomes com "temporada N"
+  if (/temporada\s*\d+/i.test(name)) return true;
+
+  return false;
+}
 
 async function fetchAllChannels(groupFilter) {
   const all = [];
@@ -46,10 +73,14 @@ export const handler = async (event) => {
   try {
     const params = event.queryStringParameters || {};
     const group = params.group || null;
+    const incluirVOD = params.vod === "true"; // ?vod=true pra incluir séries/filmes
 
     const rows = await fetchAllChannels(group);
 
-    const canais = rows.map((c) => ({
+    // Filtra VOD (a não ser que o usuário peça explicitamente)
+    const filtered = incluirVOD ? rows : rows.filter((c) => !isVOD(c));
+
+    const canais = filtered.map((c) => ({
       name: c.name,
       logo: c.logo || "",
       group: c.group_title || "Sem grupo",
@@ -66,6 +97,7 @@ export const handler = async (event) => {
       body: JSON.stringify({
         success: true,
         total: canais.length,
+        total_bruto: rows.length,
         canais,
       }),
     };
