@@ -8,50 +8,58 @@ const CORS_HEADERS = {
 
 const PAGE_SIZE = 1000;
 
-/**
- * Detecta se o canal é VOD (série, filme, anime, episódio).
- * Usa padrões de grupo e de nome para identificar.
- */
+// Categorias PERMITIDAS (Desporto, Novelas, Infantil, Regionais/Jornalismo)
+const CATEGORIAS_PERMITIDAS = [
+  "globo", "record", "sbt", "band", "redetv", "aberto", "regional",
+  "esporte", "sportv", "espn", "premiere", "combate", "luta", "futebol",
+  "novela", "infantil", "criança", "cartoon", "disney", "gloob", 
+  "noticia", "jornal", "notícias"
+];
+
+// Palavras que indicam VOD (Filmes/Séries/Doramas) que devem ser BLOQUEADOS
+const PALAVRAS_VOD = [
+  "serie", "série", "filme", "movie", "dorama", "anime", "desenho", 
+  "temporada", "episodio", "episódio", "documentario", "documentário"
+];
+
 function isVOD(canal) {
-  const group = (canal.group || "").toLowerCase().trim();
-  const name = (canal.name || "").toLowerCase().trim();
+  const group = (canal.group || "").toLowerCase();
+  const name = (canal.name || "").toLowerCase();
 
-  // 1) Grupos que começam com "Serie", "Série", "Filme", "Movie", etc.
-  //    Ignora "Canais | NOVELAS" (esse é canal ao vivo)
-  if (/^(serie|série|filme|movie|novela|show|anime|animes|documentario|documentário)\s*\|/i.test(group)) {
-    return true;
-  }
-
-  // 2) Nomes que parecem episódios: "S02 E06", "S2E1", "T3 EP4"
+  // Padrões de nome de episódio (ex: S02 E06, 1x05, T3 EP4)
   if (/\bS\d+\s*E\d+\b/i.test(name)) return true;
   if (/\bT\d+\s*EP?\d+\b/i.test(name)) return true;
-
-  // 3) Nomes tipo "2x05" (temporada x episódio)
   if (/\b\d{1,2}x\d{1,2}\b/.test(name)) return true;
-
-  // 4) Nomes com "temporada N"
   if (/temporada\s*\d+/i.test(name)) return true;
+
+  // Se o nome ou grupo tiver palavras de VOD
+  for (const p of PALAVRAS_VOD) {
+    if (group.includes(p) || name.includes(p)) return true;
+  }
 
   return false;
 }
 
-async function fetchAllChannels(groupFilter) {
+function isCategoriaPermitida(canal) {
+  const group = (canal.group || "").toLowerCase();
+  const name = (canal.name || "").toLowerCase();
+  const texto = group + " " + name;
+
+  for (const cat of CATEGORIAS_PERMITIDAS) {
+    if (texto.includes(cat)) return true;
+  }
+  return false;
+}
+
+async function fetchAllChannels() {
   const all = [];
   let offset = 0;
 
   while (true) {
-    let query = supabase
+    const { data, error } = await supabase
       .from("channels_online")
       .select("name, logo, group_title, stream, tvg_id, resolution")
-      .order("group_title", { ascending: true })
-      .order("name", { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1);
-
-    if (groupFilter) {
-      query = query.eq("group_title", groupFilter);
-    }
-
-    const { data, error } = await query;
 
     if (error) throw error;
     if (!data || data.length === 0) break;
@@ -71,16 +79,27 @@ export const handler = async (event) => {
   }
 
   try {
-    const params = event.queryStringParameters || {};
-    const group = params.group || null;
-    const incluirVOD = params.vod === "true"; // ?vod=true pra incluir séries/filmes
+    const rows = await fetchAllChannels();
 
-    const rows = await fetchAllChannels(group);
+    // Aplica os filtros (VOD e Categorias)
+    const canaisFiltrados = rows.filter((c) => {
+      // 1. Bloqueia filmes/séries/doramas
+      if (isVOD(c)) return false;
+      
+      // 2. Só deixa passar as categorias permitidas
+      if (!isCategoriaPermitida(c)) return false;
 
-    // Filtra VOD (a não ser que o usuário peça explicitamente)
-    const filtered = incluirVOD ? rows : rows.filter((c) => !isVOD(c));
+      return true;
+    });
 
-    const canais = filtered.map((c) => ({
+    // Ordena por grupo, depois por nome
+    canaisFiltrados.sort((a, b) => {
+      const gA = (a.group_title || "").localeCompare(b.group_title || "");
+      if (gA !== 0) return gA;
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
+    const canais = canaisFiltrados.map((c) => ({
       name: c.name,
       logo: c.logo || "",
       group: c.group_title || "Sem grupo",
